@@ -1,0 +1,291 @@
+---
+title: "HW 9"
+author: "SDS348"
+date: ""
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r global_options, include=FALSE}
+#LEAVE THIS CHUNK ALONE!
+library(knitr)
+opts_chunk$set(fig.align="center", fig.height=5, message=FALSE, warning=FALSE, fig.width=8, tidy.opts=list(width.cutoff=60),tidy=TRUE)
+
+#HERE'S THE CLASSIFICAITON DIAGNOSTICS FUNCTION
+class_diag<-function(probs,truth){
+  tab<-table(factor(probs>.5,levels=c("FALSE","TRUE")),truth)
+  acc=sum(diag(tab))/sum(tab)
+  sens=tab[2,2]/colSums(tab)[2]
+  spec=tab[1,1]/colSums(tab)[1]
+  ppv=tab[2,2]/rowSums(tab)[2]
+  f1=2*(sens*ppv)/(sens+ppv)
+
+  if(is.numeric(truth)==FALSE & is.logical(truth)==FALSE){
+    truth<-as.numeric(truth)-1}
+  
+  #CALCULATE EXACT AUC
+  ord<-order(probs, decreasing=TRUE)
+  probs <- probs[ord]; truth <- truth[ord]
+  
+  TPR=cumsum(truth)/max(1,sum(truth)) 
+  FPR=cumsum(!truth)/max(1,sum(!truth))
+  
+  dup<-c(probs[-1]>=probs[-length(probs)], FALSE)
+  TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+  
+  n <- length(TPR)
+  auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+
+  data.frame(acc,sens,spec,ppv,f1,auc)
+}
+```
+
+## Wenxuan Zhou wz4388
+
+**This homework is due on Sunday Nov 15, 2020 at 11:59pm. Please submit as an HTML file on Canvas.**
+
+*For all questions, include the R commands/functions that you used to find your answer. Answers without supporting code will not receive credit.*
+
+> **Review of how to submit this assignment**
+> All homework assignments will be completed using R Markdown. These `.Rmd` files consist of text/syntax (formatted using Markdown) alongside embedded R code. 
+> When you have completed the assignment (by adding R code inside codeblocks and supporting text outside of the codeblocks), create your document as follows:
+
+> - Click the arrow next to the "Knit" button (above) 
+> - Choose "Knit to HTML" and wait; fix any errors if applicable
+> - Go to Files pane and put checkmark next to the correct HTML file
+> - Click on the blue gear icon ("More") and click Export
+> - Download the file and then upload to Canvas
+
+---
+
+## Question 1 
+
+Back to Pokemon! There is a somewhat famous DataCamp module for predicting what makes a pokemon legendary and I wanted to put my own spin on it. 
+
+### 1.1 (1 pts) 
+
+First, run the following code to read in the data and drop the unnecessary variables. With the resulting dataset `poke`, how many are Legendary? How many are not?
+
+```{R}
+library(tidyverse)
+poke<-read.csv("http://www.nathanielwoodward.com/Pokemon.csv")
+poke<-poke%>%select(-`X.`,-Total,-Name)
+
+poke %>% summarize(sum(Legendary=='True'))
+poke %>% summarize(sum(Legendary=='False'))
+```
+
+*65 are Legendary and 735 are not. *
+
+### 1.2 (2 pts) 
+
+Predict Legendary from all of the remaining variables (recall the shortcut for this: `Legendary~.`) using a logistic regression. You don't need to convert it: R is smart enough to do this for you. Generate predicted probabilities for your original observations and save them as an object called `prob` in your environment (don't save them to the `poke` dataset). Use them to compute classification diagnostics with the `class_diag()` function we used during class (or the equivalent: it is declared in the preamble above so it gets loaded when you knit: if you run it, you should be able to use it in any subsequent code chunk). How well is the model performing per AUC? Provide a confusion matrix too and provide brief interpretation of what you see. 
+
+```{R}
+fit<-glm(Legendary~.,data=poke,family="binomial")
+prob <- predict(fit, type='response')
+class_diag(prob,poke$Legendary)
+table(predict=as.numeric(prob>.5),truth=poke$Legendary)%>%addmargins
+
+```
+
+*The AUC of the model is great. The sensitivity is relatively low but the specificity is very high. *
+
+### 1.3 (3 pts) 
+
+Now perform 10-fold cross validation with this model by hand like we have done in class (don't use any outside packages). Summarize the results by reporting average classification diagnostics (e.g., from `class_diags()`) across the ten folds (you might get a `NaN` for ppv, which is fine). Do you see a substantial decrease in AUC when predicting out of sample (i.e, does this model shows signs of overfitting?)
+
+```{R warning=F}
+set.seed(1234)
+k=10
+
+data1<-poke[sample(nrow(poke)),]
+folds<-cut(seq(1:nrow(poke)),breaks=k,labels=F)
+
+diags<-NULL
+for(i in 1:k){
+train<-data1[folds!=i,]
+test<-data1[folds==i,]
+
+truth<-test$Legendary
+
+fit<- glm(Legendary~.,data=train,family="binomial")
+probs<- predict(fit,newdata = test,type="response")
+
+diags<-rbind(diags,class_diag(probs,truth))
+}
+
+summarize_all(diags,mean)
+```
+
+*Yes, there is a substantial decrease in AUC when predicting out of sample. *
+
+### 1.4 (3 pts) 
+
+OK, now perform a LASSO regression on the same model (i.e., predicting Legendary from all predictor variables). You will need to have your predictor variables in a matrix (call it `poke_preds`) and your response variable in a separate matrix. A good idea would be to use model.matrix(fit) from above to get the predictor-variable matrix (do not include the `(intercept)` term; i.e., drop the first column). To get the response, just do `as.matrix(poke$Legendary)`. Perform cross-validation via `cv.glmnet` to select the regularization parameter lambda and pick `lambda.1se` to perform lasso regularization. Save your lasso/glmnet object as `lasso_fit`. Which coefficient estimates are non-zero? Use `predict(lasso_fit, poke_preds, type="response")` Report classification diagnostics. Also, provide a confusion matrix and talk about what you see. How does this compare with the full model from 1.2?
+
+```{R}
+#install.packages("glmnet")
+library(glmnet)
+set.seed(1234)
+poke_resp <- as.matrix(poke$Legendary)
+poke_preds <- model.matrix(Legendary~., data=poke)[,-1]
+cv <- cv.glmnet(poke_preds,poke_resp,family='binomial')
+lasso_fit <- glmnet(poke_preds,poke_resp,family='binomial',lambda=cv$lambda.1se)
+coef(lasso_fit)
+prob <- predict(lasso_fit, poke_preds, type="response")
+class_diag(prob, poke$Legendary)
+table(predict=as.numeric(prob>.5),truth=poke$Legendary)%>%addmargins
+```
+*Type.1Flying, Type.1Psychic, HP, Attack, Defense, Sp..Atk, Sp..Def, Speed, and Generation are non-zero. The AUC does not decrease as much as the previous model. The sensitivity is quite low and the specificity is very high in this model compared with the full model from 1.2. *
+
+### 1.5 (2 pts) 
+
+Re-run your 10-fold CV from above (1.3), but this time use only the predictor variables which had non-zero LASSO coefficient estimates (like you did in lab). Note that you will need to use/make dummies/indicator variables for the significant types, so you might grab the corresponding columns from the `poke_preds` matrix you used above. How does this model compare to the full model in terms of out-of-sample prediction? (Technical note: Because CV was already used to choose lambda, if we do CV again we are not getting a pure estimate of the lasso model's performance on new data, since it has already "seen" all of the data and let that inform its estimates. For our purposes this is a minor issue, but it can be a bigger deal in real life.)
+
+```{R}
+set.seed(1234)
+k=10
+poke1 <- poke %>% mutate(Flying=poke_preds[,'Type.1Flying'], Psychic=poke_preds[,'Type.1Psychic'])
+
+data1<-poke1[sample(nrow(poke1)),]
+folds<-cut(seq(1:nrow(poke1)),breaks=k,labels=F)
+
+diags<-NULL
+for(i in 1:k){
+train<-data1[folds!=i,]
+test<-data1[folds==i,]
+
+truth<-test$Legendary
+
+fit<- glm(Legendary~Flying+Psychic+HP+Attack+Defense+Sp..Atk+Sp..Def+Speed+Generation,data=train,family="binomial")
+probs<- predict(fit,newdata = test,type="response")
+
+diags<-rbind(diags,class_diag(probs,truth))
+}
+
+summarize_all(diags,mean)
+```
+
+*In terms of out-of-sample prediction, this model is better than the full model. *
+
+### 1.6 (1 pts) 
+
+Let's do something *fancy-sounding*. We will use a random forest classifier to predict Legendary status from our predictor variables. In brief, this technique uses decision trees fitted (or "grown") repeatedly on bootstrapped samples of the data (i.e., with replacement), using bootstrapped samples of the predictor variables to predict (so not every model has all of the predictors: an interesting twist!). The predictions (Legendary/not) from each such tree are then averaged ("bagged" or bootstrap-aggregated); the proportion of trees predicting each pokemon as Legendary can be gotten and used as a probability for diagnostic purposes. Just like in CV, averaging performance (of many decision trees) across many (bootstrapped) samples reduces overfitting and makes our predictions more robust to noise. For more information about this cool technique, which we do not have time to cover in any detail, see (wikipedia)[https://en.wikipedia.org/wiki/Random_forest]. 
+
+We will use the predictions from this model to compare classification performance with our those of our logistic regression (using the variables selected by lasso regularization, a technique also designed to curtail overfitting). Note that we are using the random forest function right out of the box and better performance could probably be achieved if we tuned certain arguments (e.g., ntree, mtry).
+
+Because the technique is based on fitting a model to repeated bootstrapped samples and aggregating across predictions, we don't expect that using k-fold CV will show much difference. But let's see! Run the following code to (1) fit the random forest model and produce the classification diagnostics and (2) perform 10-fold CV on the random forest model (to show it doesn't really change). 
+
+Compare the classification performance of the logistic regression using the variables lasso selected (i.e., the CV performance) with the classification performance of the random forest. Is there much difference?
+
+
+```{R}
+#install.packages("randomForest")
+library(randomForest) 
+fit_rf=randomForest(Legendary~.,data=poke)
+
+class_diag(fit_rf$votes[,2],poke$Legendary)
+
+######### CV
+set.seed(1234)
+k=10
+
+data1<-poke[sample(nrow(poke)),]
+folds<-cut(seq(1:nrow(poke)),breaks=k,labels=F)
+
+diags<-NULL
+for(i in 1:k){
+  train<-data1[folds!=i,]
+  test<-data1[folds==i,]
+  truth<-test$Legendary
+  
+  fit<-randomForest(Legendary~.,data=train)
+  probs<-predict(fit,newdata = test,type="prob")[,2]
+
+diags<-rbind(diags,class_diag(probs,truth))
+}
+
+diags%>%summarize_all(mean)
+```
+
+*There is not much difference. *
+
+### 2.1 (2 pts) 
+
+Below, you are given 6 malignant patients and 6 benign patients. The vectors contain their predicted probabilities (i.e., the probability of malignancy from some model). If you compare every malignant patient with every benign patient, how many times does a malignant patient have a higher predicted probability than a benign patient? What proportion of all the comparisons is that? You can easily do this by hand, but you might try to find a way to use `expand.grid()`, `outer()`, or even a loop to calculate this in R (use ?functionname to read about these functions if you are curious!).
+
+```{R}
+malig<-c(.49, .36, .58, .56, .61, .66)
+benign<-c(.42, .22, .26, .53, .31 ,.41)
+
+
+expand.grid(m=malig, b=benign) %>% filter(m>b) %>% count()
+
+32/36
+```
+*A malignant patient have a higher predicted probability than a benign patient 32 times. The proportion is 0.889. *
+
+### 2.2 (1 pts) 
+
+Now, treat the predicted probabilities as the response variable and perform an Wilcoxon/Mann-Whitney U test in R using `wilcox.test(group1, group2)` comparing the distribution of predicted probabilities for both groups (malig and benign). What does your W/U statistic equal?
+
+```{R}
+wilcox.test(malig, benign)
+```
+*My W/U statistic equals 0.026. *
+
+### 2.3 (2 pts) 
+
+Make these data tidy by creating a dataframe and putting all predicted probabilities into one column and the malignant/benign labels in another (you should end up with twelve rows, one for each observation). Use this data and ggplot to make a graph of the distribution of probabilities for both groups (histogram): fill by group. Leave default binwidth alone (it will look kind of like a barcode). Eyeballing and counting manually, for each benign (red) compute the number of malignants (blue) it is greater than (blue) and add them all up. This is the number of times a benign has a higher predicted probability than a malignant! In 1.1 you found the number of times a malignant beats a benign (i.e., has a higher predicted probability than a benign): What do those two numbers add up to?
+
+```{R}
+data <- data.frame(malignant=malig, benign=benign)
+data <- data %>% pivot_longer(c('malignant','benign'), names_to='type', values_to='prob') %>% arrange(type)
+ggplot(data, aes(x=prob,fill=type)) + geom_histogram()
+```
+
+*The number of times a benign has a higher predicted probability than a malignant is 4. Those two numbers add up to 36. *
+
+
+### 2.4 (2 pts) 
+
+Set the cutoff/threshold at .2, .25, .3, .35, .37, .4, .45, .5, .55, .57, .6, .65, .7 and for for each cutoff, compute the true-positive rate (TPR) and the false-postive rate (FPR). You may do this manually, but I encourage you to try to figure out a way to do it in R (e.g., using `expand.grid` and/or `dplyr` functions). Save the TPR and FPR your get for each cut-off. Then make a plot of the TPR (y-axis) against the FPR (x-axis) using geom_path.
+
+```{R}
+cutoffs<-c(.2, .25, .3, .35, .37, .4, .45, .5, .55, .57, .6, .65, .7)
+
+k = 1
+
+TPR <- c()
+FPR <- c()
+
+for(i in cutoffs){
+  TPR[[k]] <- mean(data[data$type=='malignant',]$prob>i)
+  FPR[[k]] <- mean(data[data$type=='benign',]$prob>i)
+  k <- k + 1
+}
+
+data1 <- data.frame(TPR=TPR, FPR=FPR)
+
+ggplot(data1,aes(x=FPR,y=TPR)) + geom_path()
+```
+
+### 2.5 (1 pt) 
+
+Use the `class_diag()` function to calculate the AUC (and other diagnostics on this data). Where in this assignment have you seen that AUC number before? (If you haven't seen that number before, go back and redo 2.1 and make sure you are answering both questions!)
+
+```{R}
+data <- data %>% mutate(y=ifelse(type=='malignant',1,0))
+class_diag(data$prob,data$y)
+```
+
+*I saw this AUC number in question 2.1. It is the same as the proportion of a malignant patient having a higher predicted probability than a benign patient in all the comparisons. *
+
+```{R, echo=F}
+## DO NOT DELETE THIS CHUNK!
+sessionInfo()
+Sys.time()
+Sys.info()
+```

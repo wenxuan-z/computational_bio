@@ -1,0 +1,190 @@
+---
+title: "HW 6"
+author: "SDS348 Fall 2020"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r global_options, include=FALSE}
+#DO NOT EDIT THIS CHUNK OR ANYTHING ABOVE IT!
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F, tidy=T, tidy.opts=list(width.cutoff=50), R.options=list(max.print=100,dplyr.print_max=100))
+```
+
+## Wenxuan Zhou wz4388
+
+**This homework is due on October 25 at 11:59pm. Please submit as a knitted HTML file on Canvas.**
+
+*For all questions, include the R commands/functions that you used to find your answer. Answers without supporting code will not receive credit.*
+
+> **Review of how to submit this assignment**
+> All homework assignments will be completed using R Markdown. These `.Rmd` files consist of text/syntax (formatted using Markdown) alongside embedded R code. 
+> When you have completed the assignment (by adding R code inside codeblocks and supporting text outside of the codeblocks), create your document as follows:
+
+> - Click the arrow next to the "Knit" button (above) 
+> - Choose "Knit to HTML" and wait; fix any errors if applicable
+> - Go to Files pane and put checkmark next to the correct HTML file
+> - Click on the blue gear icon ("More") and click Export
+> - Download the file and then upload to Canvas
+
+---
+
+
+## Question 1 (2 pts): 
+
+#### The distribution of mosquito weight for the Aedes aegypti species is known to be log-normal (that is, weight is normally distributed if transformed with the natural log, the function `log()` in R). Untransformed weights of 11 female and 9 male mosquitoes are given below (mg). Do the two sexes weigh the same on average? Make this data meet the normality assumption with a log transformation and perform a t test in R using t.test(). You can assume the equal-variances assumption was not met (it will default to this: your output should say Welch Two Sample t-test at the top). If needed, see lab handout 6 from Biostats to review how to do a t-test (on Canvas).
+
+**Females:** 0.291, 0.208, 0.241, 0.437, 0.228, 0.256, 0.208, 0.234, 0.320, 0.340, 0.150  
+**Males:**   0.185, 0.222, 0.149, 0.187, 0.191, 0.219, 0.132, 0.144, 0.140
+
+```{R}
+library(dplyr)
+library(tidyverse)
+females <- c(0.291, 0.208, 0.241, 0.437, 0.228, 0.256, 0.208, 0.234, 0.320, 0.340, 0.150)
+males <- c(0.185, 0.222, 0.149, 0.187, 0.191, 0.219, 0.132, 0.144, 0.140)
+
+females_log <- log(females)
+males_log <- log(males)
+t.test(females_log, males_log)
+```
+
+*The two sexes do not weigh the same on average. p-value is 0.002, which means we reject the null hypothesis. *
+
+## Question 2 (3 pts)
+
+#### Take the data from before and build a dataframe with a column for weight, a column for logweight, and a column for sex. After setting the seed as specified below, perform a randomization test on the original weight data *and* on the log weight data. That is, for both, generate a distribution of 5000 mean differences on randomized data (either with a loop or using replicate). Compute and report two-tailed p-values in both cases. Do both randomization tests agree? Are your conclusions the same as they were above for the parametric t test? 
+
+```{R}
+obs_diff <- mean(females) - mean(males)
+log_diff <- mean(females_log) - mean(males_log)
+mosqwt <- data.frame(weight=c(females,males), logweight=c(females_log, males_log), 
+                     sex=c(rep('female',11),rep('male',9)))
+set.seed(348)
+diffs<-vector()
+
+for(i in 1:5000){
+new<-data.frame(weight=sample(mosqwt$weight),sex=mosqwt$sex)
+diffs[i]<-mean(new[new$sex=="female",]$weight)-   
+              mean(new[new$sex=="male",]$weight)} 
+mean(diffs > obs_diff | diffs < -obs_diff)
+
+set.seed(348)
+diffs<-vector()
+
+for(i in 1:5000){
+new<-data.frame(logweight=sample(mosqwt$logweight),sex=mosqwt$sex)
+diffs[i]<-mean(new[new$sex=="female",]$logweight)-   
+              mean(new[new$sex=="male",]$logweight)} 
+mean(diffs > log_diff | diffs < -log_diff)
+```
+
+*Both randomization tests agree. My conclusions are the same as they were above for the parametric t test. *
+
+
+## Question 3 (3 pts)
+
+#### The original mean difference in mosquito weights between the two groups (F-M) was .0905 mg. Now, create a 95% CI for this difference in means using bootstrapping. Resample from the original male mosquito data with replacement using `sample(..., replace=T)`, resample from the original female mosquito data with replacement with `sample(..., replace=T)`, take the mean difference of these samples, save it, and repeat this process 5000 times (either with a loop or using replicate). What is the average of the resulting distribution of mean differences and why is it not exactly equal to the true mean difference (.0905)? Report the 95% CI of this distribution by reporting the .025 and the 0.975 percentiles of mosquito weight differences, which you can get using `quantile()`. Interpret it in a sentence.
+
+
+```{R}
+means<-vector()
+
+for(i in 1:5000){
+  samp1<-sample(females,replace=T)
+  samp2<-sample(males,replace=T)
+  means[i]<-mean(samp1-samp2)
+}
+
+mean(means)
+quantile(means,c(.025, .975))
+```
+
+*The average of the resulting distribution of mean differences is 0.0899. It is not exactly equal to the true mean difference (.0905) because it is calculated using bootstrapping, which might not be the same as the true mean due to random sampling. The 0.025 percentile of mosquito weight differences is 0.0428 mg, and the 0.975 percentile of mosquito weight differences is 0.1417 mg. I am 95% confident that average weight of the females is between 0.0428 and 0.1417 mg more than the average weight males.*
+
+
+## Question 4 (3 pts)
+
+#### Use the dataset PlantGrowth to compute the SSB and SSW for a one-way ANOVA: Compute these manually (e.g., using dplyr functions to get group means) and then use them to compute an F statistic. Use `pf(..., df1=, df2=, lower.tail=F)` on the F statistic you generate to determine the p-value. Compare this to the output from summary(aov()) in R.`
+
+```{R}
+SSW<- PlantGrowth%>%group_by(group)%>%summarize(SSW=sum((weight-mean(weight))^2))%>%summarize(sum(SSW))%>%pull
+SSB<- PlantGrowth%>%mutate(mean=mean(weight))%>%group_by(group)%>%mutate(groupmean=mean(weight))%>%
+    summarize(SSB=sum((mean-groupmean)^2))%>%summarize(sum(SSB))%>%pull
+F_stat <- (SSB/2)/(SSW/27)
+pf(F_stat, df1=2, df2=27, lower.tail = F)
+summary(aov(weight~group, data=PlantGrowth))
+```
+
+*The SSB is 3.766; the SSW is 10.492; the F statistic is 4.846. The p-value is 0.016. These are the same when compared with the output from summary(aov()). *
+
+
+## Question 5 (4 pts)
+
+#### Using the Pottery dataset from last week's lab, compute a MANOVA testing whether at least one of the five response variables (chemical compositions) differ by Site: use `manova(cbind(Y1,Y2,Y3...)~X,data=data)` and report the results in writing. Don't worry about assumptions (there are lots). If it is significant, which of the elements differ by site? Report full ANOVA results for each response variable. Use  For the ones that differ, which sites are different? That is, perform post hoc t-tests for all 5 ANOVAs using `pairwise.t.test(...,p.adj="none")`. You do not have to write anything up for the post hoc tests. How many hypothesis tests have you done in all (MANOVA, ANOVAs, and pairwise t-tests)? Across this whole set of tests, what is the probability that you have made at least one type I error (i.e., what is the overall type-I error rate)? What (boneferroni adjusted) significance level should you use if you want to keep the overall type I error rate at .05? Which of your post hoc tests that were significant before the adjustment are no longer significant?
+
+```{R}
+pots<-read_csv("http://www.nathanielwoodward.com/Pottery.csv")
+
+man1 <- manova(cbind(Al, Fe, Mg, Ca, Na)~Site, data=pots)
+summary(man1)
+summary.aov(man1)
+
+pairwise.t.test(pots$Al, pots$Site, p.adj='none')
+pairwise.t.test(pots$Fe, pots$Site, p.adj='none')
+pairwise.t.test(pots$Mg, pots$Site, p.adj='none')
+pairwise.t.test(pots$Ca, pots$Site, p.adj='none')
+pairwise.t.test(pots$Na, pots$Site, p.adj='none')
+
+1-0.95^36
+0.05/36
+```
+
+*The p-value is less than 0.05, so at least one of the five response variables differ by Site. All of the elements differ by site. I have done 36 hypothesis tests. The probability that I have made at least one type I error is 0.842. The significance level I should use if I want to keep the overall type I error rate at .05 is 0.0014. The post hoc tests between Caldicot and Llanedyrn for Ca and Na were significant before the adjustment and are no longer significant.*
+
+## Question 6 (2 pts)
+
+#### Do a PERMANOVA on the Pottery dataset. You are recommended to use adonis() function in vegan `package`, but 1 bonus point if you handcode the sampling distribution (don't mess it up)! Is your p-value larger or smaller than in the parametric MANOVA? Why might that be?
+
+```{R}
+library(vegan)
+dists <- pots %>% select(-Site) %>% dist()
+adonis(dists~Site, data=pots)
+
+SST <- sum(dists^2)/26
+SSW <- pots %>% group_by(Site) %>% do(d=dist(.[2:3],'euclidean')) %>% ungroup() %>% 
+  summarize(sum(d[[1]]^2)/14 + sum(d[[2]]^2)/2 + sum(d[[3]]^2)/5 + sum(d[[4]]^2)/5) %>% pull
+F_obs <- ((SST-SSW)/3)/(SSW/22)
+
+Fs<-replicate(1000,{ 
+  new<-pots%>%mutate(Site=sample(Site)) #permute the species vector
+  SSW<-new%>%group_by(Site)%>% do(d=dist(.[2:3],"euclidean"))%>%ungroup()%>% 
+    summarize(sum(d[[1]]^2)/14 + sum(d[[2]]^2)/2 + sum(d[[3]]^2)/5 + sum(d[[4]]^2)/5) %>% pull
+  ((SST-SSW)/3)/(SSW/22) #calculate new F ratio on randomized data
+})
+mean(Fs>F_obs)
+```
+
+*For the adonis method, my p-value is larger than in the parametric MANOVA because MANOVA is more powerful when the assumptions are met. For the handcode method, my p-value is smaller than in the parametric MANOVA because of the limited runs. *
+
+
+## Question 7 (3 pts) 
+
+#### Make the pottery dataset long by pivoting all of the element names into a column and all of the values into a column. Use that data to make a plot showing the average abundance of each element at each site (using stat="summary") by mapping Site to x, values to y, and then faceting by element (set scales='free'). Add bootstrapped 95% CI for each mean with `geom_errorbar(stat="summary",fun.data=mean_cl_boot)`, or by computing them manually.
+
+```{R}
+pots1 <- pots %>% pivot_longer(2:6, names_to='name', values_to='value')
+ggplot(pots1, aes(x = Site, y = value))+
+  geom_bar(stat="summary", fun=mean) + facet_wrap(~name, scales='free') +
+  geom_errorbar(stat='summary', fun.data=mean_cl_boot) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{R, echo=F}
+## DO NOT DELETE THIS BLOCK!
+sessionInfo()
+Sys.time()
+Sys.info()
+```

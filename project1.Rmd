@@ -1,0 +1,136 @@
+---
+title: "Project 1"
+author: "SDS348 Fall 2020"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r global_options, include=FALSE}
+#DO NOT EDIT THIS CHUNK OR ANYTHING ABOVE IT!
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+### Introduction
+
+The two datasets I chose was hate_crimes and immigration. The hate_crime dataset contains 13 variables: state (state name), state_abbrev (state abbreviation), median_house_inc (median household income in 2016), share_unemp_seas (share of the population that is unemployed in 2016), share_pop_metro (share of the population that lives in metropolitan areas in 2015), share_pop_hs (share of adults 25 and older with a high-school degree in 2009), share_non_citizen (share of the population that are not U.S. citizens in 2015), share_white_poverty (share of white residents who are living in poverty in 2015), gini_index (2015), share_non_white (share of the population that is not white in 2015), share_vote_trump (share of 2016 U.S. presidential voters who voted for Donald Trump), hate_crimes_per_100k_splc (hate crimes per 100,000 population in 2016), and avg_hatecrimes_per_100k_fbi (average annual hate crimes per 100,000 population from 2010 to 2015). The immigration dataset contains 5 variables: state (state name), total_pop (total population in each state in 2015), immigrant_pop (immigrant population in each state in 2015), share_total_pop (share of the total population that is immigrant in 2015), and share_labor_force (share of labor force that is immigrant in 2015). The hate_crime dataset was obtained from R package "fivethirtyeight", and dataset immigrant was obtained from Migration Policy Institute. Hate crime is motivated by prejudice on the basis of race, religion, sexual orientation, or other grounds, and it has become a big promblem nowadays. I want to know what factors could affect the rate of hate crime in the US, besides, as a non-citizen, I want to see if the share of immigrant population plays a role in affecting hate crime, so these two datasets are very intersting to me. In my opinion, I expect that the more immigrants there are in a state, the more hate crimes will happen.
+
+```{r}
+library(tidyverse)
+library(fivethirtyeight)
+library(cluster)
+hate_crimes <- data.frame(hate_crimes)
+immigration <- read_csv("immigration.csv")
+```
+
+### Tidying
+
+```{r}
+hate_crimes %>% pivot_longer(contains('share'), names_to='name', values_to='value') %>% 
+  separate(name, into=c('stat','type'),sep = 6) %>% pivot_wider(names_from = type, values_from = value) %>% 
+  separate(stat, into = c('stat','remove'), sep = 5) %>% select(-remove)
+```
+*pivot_longer() put all variables containing 'share' into a single column called 'name', and their corresponding values are stored in 'value'. separate() splits the 'name' variable into two parts: 'stat' and 'type'; 'stat' represents the kind of statistics of those values (share), and 'type' represents different types of share. pivot_wider() selects different types of share and makes them individual columns with their values. The second separate() helps remove the '_' from the original 'stat'. select() removes the extra column 'remove' and gives the final data. My data is already tidy so I demonstrate the functions for tidying without actually changing the dataset. *
+
+### Joining/Merging
+
+```{r}
+fulldata <- full_join(hate_crimes, immigration, by = 'state')
+glimpse(fulldata)
+```
+*full_join() keeps information from both datasets. In this case, since both datasets contain 51 observations for each state, joining by 'state' is chosen because it is the common variable. *
+
+### Wrangling
+
+```{r}
+fulldata <- fulldata %>% mutate(total_pop_in_100000 = total_pop/100000) %>% 
+  mutate(avg_hatecrimes = avg_hatecrimes_per_100k_fbi * total_pop_in_100000)
+
+fulldata %>% group_by(state) %>% arrange(avg_hatecrimes)
+
+fulldata %>% filter(immigrant_pop > mean(immigrant_pop, na.rm = T)) %>% 
+  select(state, immigrant_pop, avg_hatecrimes)
+
+fulldata %>% filter(immigrant_pop > mean(immigrant_pop, na.rm = T)) %>% 
+  inner_join(fulldata %>% filter(avg_hatecrimes > mean(avg_hatecrimes, na.rm = T))) %>% 
+  select(state, immigrant_pop, avg_hatecrimes)
+
+fulldata %>% summarize_if(is.numeric, mean, na.rm = T)
+
+fulldata %>% summarize_if(is.numeric, sd, na.rm = T)
+
+fulldata %>% summarize_if(is.numeric, var, na.rm = T)
+
+fulldata %>% summarize_if(is.numeric, min, na.rm = T)
+
+fulldata %>% summarize_if(is.numeric, max, na.rm = T)
+
+fulldata %>% summarize_if(is.numeric, quantile, na.rm = T)
+
+cor(fulldata %>% select(where(is.numeric)), use='pair')
+
+```
+*Two new columns are created by mutate(). total_pop_in_100000 is created by dividing the total_pop (total population) by 100000 to show the population in million. avg_hatecrimes is created by multiplying total population in million and avg_hatecrimes_per_100k_fbi (average annual hatecrime rate), which gives the average total hatecrimes per year. Wyoming has the lowest average hatecrimes per year (1.542 per year), and California has the highest average hatecrimes per year (948.571 per year). The 13 states that have more immigrant population are Arizona, California, Florida, Georgia, Illinois, Maryland, Massachusetts, New Jersey, New York, Pennsylvania, Texas, Virginia, and Washington. Among these states, Arizona, California, Florida, Massachusetts, New Jersey, Texas, Virginia, and Washington also have an above-average annual hatecrimes. The mean, standard deviation, variance, minimum, maximum, and quantiles of each numeric variable are listed above. The correlations of each variable are also calculated and stated above. It can be seen from the correlations that immigrant population is strongly correlated with annual hatecrimes.*
+
+### Visualization
+
+```{r}
+library(ggplot2)
+
+cormat <- fulldata %>% select_if(is.numeric) %>% 
+  select(-total_pop_in_100000, -hate_crimes_per_100k_splc, -avg_hatecrimes_per_100k_fbi) %>% 
+  cor(use = 'pair')
+
+cormat %>% as.data.frame %>% rownames_to_column('var1') %>% pivot_longer(-1, 'var2', values_to='correlation') %>% 
+  ggplot(aes(var1, var2, fill=correlation)) + geom_tile() + 
+  scale_fill_gradient2(low='blue',mid='white',high='red') + 
+  geom_text(aes(label=round(correlation,2)), color='black', size = 2) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  coord_fixed()
+
+ggplot(fulldata, aes(x = share_total_pop, y = avg_hatecrimes)) +
+  geom_point(aes(color=share_pop_metro)) +
+  theme_classic() + theme(legend.position="right") +
+  geom_smooth(se = FALSE, method = "lm", col = 'black') +
+  labs(x = "Proportion of immigrants in 2015",
+       y = "Average annual hate crimes during 2010-2015",
+       title = "Relationship between immigrant proportion & hate crimes",
+       color = 'Metropolitan population proportion') + 
+  scale_x_continuous(breaks=seq(0.05, 0.3, 0.05), labels=scales::percent) + 
+  scale_y_continuous(breaks = seq(200, 1000, 200))
+
+ggplot(fulldata, aes(x = share_vote_trump, y = avg_hatecrimes)) +
+  geom_bar(aes(y = avg_hatecrimes, fill=state_abbrev), stat = 'summary') +
+  theme(legend.position = 'left') +
+  labs(x = "Proportion of votes for Donald Trump",
+       y = "Average annual hate crimes during 2010-2015",
+       title = "Relationship between Trump support & hate crimes",
+       fill = 'Abbreviation')
+
+```
+*From the correlation heatmap, it can be seen that total population has a correlation of 0.94 with immigrant population; proportion of immigrants has a correlation of 1 with immigrant's share of labor force and a correlation of 0.93 with proportion of non-citizen; immigrant population has a correlation of 0.81 with average annual hatecrimes, which means that annual hatecrimes is strongly correlated with immigrant populations in a state. Based on the graph "Relationship between immigrant proportion & hate crimes", the average annual hatecrimes increases with the proportion of immigrants in a state and the proportion of the population that lives in metropolitan areas. According to the graph "Relationship between Trump support & hate crimes", the average annual hatecrimes decreases with more votes for Donald Trump. *
+
+### Clustering
+
+```{r}
+pam_dat<-fulldata%>%select(share_total_pop, share_vote_trump, share_pop_metro, share_pop_hs, median_house_inc)
+sil_width<-vector()
+for(i in 2:10){  
+  pam_fit <- pam(pam_dat, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width  
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10)
+final <- fulldata %>% select(share_total_pop, share_vote_trump, share_pop_metro, share_pop_hs, median_house_inc) %>% 
+  scale %>% as.data.frame
+pam1 <- final %>% pam(3)
+
+final <- final %>% mutate(cluster=as.factor(pam1$clustering))
+library(GGally)
+ggpairs(final, aes(color=cluster))
+plot(pam1,which=2)
+```
+*The PAM clustering results show that based on the 5 variables: share_total_pop, share_vote_trump, share_pop_metro, share_pop_hs, and median_house_inc, these 51 states could be put into 3 clusters. Cluster 1 (red) has a low share of immigrants in population, high share of people supporting Trump, median share of people living in metropolitan areas, low share of adults 25 and older with a high-school degree, and low median household income. Cluster 2 (green) has a similar share of immigrants in population with cluster 1, median share of people supporting Trump, high share of people living in metropolitan areas, median share of adults 25 and older with a high-school degree, and high median household income. Cluster 3 (blue) has a high share of immigrants in population, low share of people supporting Trump, high share of people living in metropolitan areas, median share of adults 25 and older with a high-school degree, and high median household income. The average silhouette width is 0.32, which means that this clustering structure is weak and could be artificial. *

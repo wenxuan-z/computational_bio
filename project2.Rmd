@@ -1,0 +1,241 @@
+---
+title: "Project 2"
+author: "SDS348 Fall 2020"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+---
+
+```{r global_options, include=FALSE}
+#DO NOT EDIT THIS CHUNK OR ANYTHING ABOVE IT!
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+## Wenxuan Zhou wz4388
+
+### Introduction
+
+The dataset I chose was Pima. This dataset consists of diebetes diagnosis of women (at least 21 years old) of Pima Indian heritage and their medical record data. The Pima dataset contains 8 variables: npreg (number of pregnancies), glu (plasma glucose concentration in an oral glucose tolerance test), bp (diastolic blood pressure in mmHg), skin (triceps skin fold thickness in mm), bmi (body mass index), ped (diabetes pedigree function), age (age in years), and type (Yes for diabetic and No for not diabetic). There are 332 observations in this dataset. 
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(rstatix)
+library(sandwich); library(lmtest)
+Pima <- read_csv("Pima.csv") %>% select(-X1)
+```
+
+### MANOVA
+
+```{r}
+man1 <- manova(cbind(npreg, glu, bp, skin, bmi, ped, age)~type, data=Pima)
+summary(man1)
+summary.aov(man1)
+
+pairwise.t.test(Pima$npreg, Pima$type, p.adj='none')
+pairwise.t.test(Pima$glu, Pima$type, p.adj='none')
+pairwise.t.test(Pima$bp, Pima$type, p.adj='none')
+pairwise.t.test(Pima$skin, Pima$type, p.adj='none')
+pairwise.t.test(Pima$bmi, Pima$type, p.adj='none')
+pairwise.t.test(Pima$ped, Pima$type, p.adj='none')
+pairwise.t.test(Pima$age, Pima$type, p.adj='none')
+
+1-0.95^15
+0.05/15
+
+group <- Pima$type
+DVs <- Pima %>% select(npreg,glu,bp,skin,bmi,ped,age)
+
+#Test multivariate normality for each group (null: assumption met)
+sapply(split(DVs,group), mshapiro_test)
+
+#If any p<.05, stop. If not, test homogeneity of covariance matrices
+
+#Box's M test (null: assumption met)
+box_m(DVs, group)
+
+#View covariance matrices for each group
+lapply(split(DVs,group), cov)
+
+```
+
+*The p-value is less than 0.05, so at least one of the seven response variables differ by the diabetic status. All of the variables show a mean difference by the diabetic status. The diabetic group is different from the non-diabetic group. I have performed 15 tests. The probability that I have made at least one type I error is 0.537. The significance level I should use if I want to keep the overall type I error rate at .05 is 0.003. Every response variable is still significant. MANOVA assumptions: 1. Random samples, independent observations: this is likely to be met because the data was collected by the US National Institute of Diabetes and Digestive and Kidney Diseases. 2. Multivariate normality of DVs: this is not met. 3. Homogeneity of within-group covariance matrices: it is not met in this dataset. 4. Linear relationships among DVs: it is likely to be met. 5. No extreme univariate or multivariate outliers: it is likely be met in this dataset. 6. No multicollinearity: it is likely to be met. *
+
+### Randomization
+
+```{r}
+library(vegan)
+dists <- Pima %>% select(-type) %>% dist()
+adonis(dists~type, data=Pima)
+
+SST<- sum(dists^2)/332
+SSW<-Pima%>%group_by(type)%>%select(npreg,glu,bp,skin,bmi,ped,age)%>% do(d=dist(.[-1],"euclidean"))%>%ungroup()%>% summarize(sum(d[[1]]^2)/223 + sum(d[[2]]^2)/109)%>%pull
+F_obs<-((SST-SSW)/1)/(SSW/330)
+
+Fs<-replicate(1000,{ 
+  new<-Pima%>%mutate(type=sample(type)) #permute the species vector
+  SSW<-new%>%group_by(type)%>%select(npreg,glu,bp,skin,bmi,ped,age)%>% 
+  do(d=dist(.[-1],"euclidean"))%>%ungroup()%>% summarize(sum(d[[1]]^2)/223 + sum(d[[2]]^2)/109)%>%pull
+((SST-SSW)/1)/(SSW/330) #calculate new F ratio on randomized data
+})
+
+{hist(Fs,prob = T); abline(v=F_obs, col="red", add=T)}
+
+mean(Fs>F_obs)
+```
+
+*Null hypothesis: For each response variable, the means of diabetic group and non-diabetic group are equal. Alternative hypothesis: For at least 1 response variable, at least 1 group mean differs. I reject the null hypothesis (p < 0.05). *
+
+### Linear Regression Model
+
+```{r}
+Pima$bmi_c <- Pima$bmi - mean(Pima$bmi)
+fit<-lm(bp~bmi_c*type, data=Pima)
+summary(fit)
+Pima %>% ggplot(aes(bmi_c, bp, color = type)) + geom_point() + geom_smooth(method = "lm", fullrange = TRUE)
+resids<-fit$residuals 
+Pima %>% ggplot()+geom_point(aes(bmi_c,bp))
+shapiro.test(resids)
+bptest(fit)
+coeftest(fit, vcov = vcovHC(fit))
+```
+
+*71.1032 mmHg is mean bp for non-diabetics with zero bmi. Non-diabetics show an increase of 0.6083 mmHg in bp for every 1-unit increase in bmi on average. For people with average bmi, diabetics have average bp that is 2.1357 greater than non-diabetics. The slope for bmi on bp is 0.1403 lower for diabetics compared to non-diabetics. Linearity is met; normality is not met; homoskedasticity is met. Only bmi has a significant effect on bp. 12.03% of the variation in the bp is explained by my model. *
+
+### Bootstrapped Standard Errors
+
+Rerun same regression model (with the interaction), but this time compute bootstrapped standard errors (either by resampling observations or residuals). Discuss any changes you observe in SEs and p-values using these SEs compared to the original SEs and the robust SEs)
+
+```{r}
+samp_distn<-replicate(5000, {
+  boot_dat <- sample_frac(Pima, replace=T)
+  fit <- lm(bp~bmi_c*type, data=boot_dat)
+  coef(fit)
+})
+samp_distn %>% t %>% as.data.frame %>% summarize_all(sd)
+```
+
+*All the SEs are similar. The original SEs are generally the lowest, and the robust SEs are generally the highest. *
+
+### Logistic Regression Model with Two Explanatory Variables
+
+Fit a logistic regression model predicting a binary variable (if you don’t have one, make/get one) from at least two explanatory variables (interaction not necessary).
+
+Interpret coefficient estimates in context (10)
+Report a confusion matrix for your logistic regression (2)
+Compute and discuss the Accuracy, Sensitivity (TPR), Specificity (TNR), Precision (PPV), and AUC of your model (5)
+Using ggplot, make a density plot of the log-odds (logit) colored/grouped by your binary outcome variable (3)
+Generate an ROC curve (plot) and calculate AUC (either manually or with a package); interpret (5)
+
+```{r}
+Pima1 <- Pima %>% mutate(y=ifelse(type=="Yes",1,0)) %>% select(npreg,glu,bp,skin,bmi,ped,age,y)
+fit <- glm(y~ped+glu,data=Pima1,family="binomial")
+summary(fit)
+exp(coef(fit))
+prob <- predict(fit, type='response')
+table(predict=as.numeric(prob>.5),truth=Pima1$y)%>%addmargins
+
+class_diag<-function(probs,truth){
+  tab<-table(factor(probs>.5,levels=c("FALSE","TRUE")),truth)
+  acc=sum(diag(tab))/sum(tab)
+  sens=tab[2,2]/colSums(tab)[2]
+  spec=tab[1,1]/colSums(tab)[1]
+  ppv=tab[2,2]/rowSums(tab)[2]
+  f1=2*(sens*ppv)/(sens+ppv)
+
+  if(is.numeric(truth)==FALSE & is.logical(truth)==FALSE){
+    truth<-as.numeric(truth)-1}
+  
+  #CALCULATE EXACT AUC
+  ord<-order(probs, decreasing=TRUE)
+  probs <- probs[ord]; truth <- truth[ord]
+  
+  TPR=cumsum(truth)/max(1,sum(truth)) 
+  FPR=cumsum(!truth)/max(1,sum(!truth))
+  
+  dup<-c(probs[-1]>=probs[-length(probs)], FALSE)
+  TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+  
+  n <- length(TPR)
+  auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+
+  data.frame(acc,sens,spec,ppv,f1,auc)
+}
+class_diag(prob, Pima1$y)
+
+Pima$logit<-predict(fit,type="link")
+Pima%>%ggplot()+geom_density(aes(logit,color=type,fill=type), alpha=.4)+
+  theme(legend.position=c(.85,.85))+xlab("logit (log-odds)")+
+  geom_rug(aes(logit,color=type))
+
+library(plotROC)
+Pima<-Pima%>%mutate(prob=predict(fit, type="response"))
+ROCplot<-ggplot(Pima)+geom_roc(aes(d=type,m=prob), n.cuts=0)
+ROCplot
+calc_auc(ROCplot)
+```
+
+*Odds of getting diabetes for women with zero pedifree function and zero glucose concentration is 0.0016. Controlling for glu, the odds of getting diabetes multiplies 3.291 for 1 unit increase in diabetes pedigree function. Controlling for ped, the odds of getting diabetes multiplies 1.042 for 1 unit increase in glu. The Accuracy is 0.774; the TPR is 0.523 (not good); the TNR is 0.897 (good); the PPV is 0.713; the AUC is 0.822 (good). AUC is the probability that a randomly selected person with diabetes has a higher predicted probability than a randomly selected person without diabetes, which is 0.822. *
+
+### Logistic Regression Model with More Explanatory Variables
+
+```{r}
+Pima <- read_csv("Pima.csv") %>% select(-X1)
+Pima <- Pima %>% mutate(y=ifelse(type=="Yes",1,0)) %>% select(-type)
+fit <- glm(y~npreg+bp+skin+bmi+age+ped+glu,data=Pima,family="binomial")
+summary(fit)
+
+prob <- predict(fit, type='response')
+class_diag(prob, Pima$y)
+
+k=10
+
+data1<-Pima[sample(nrow(Pima)),]
+folds<-cut(seq(1:nrow(Pima)),breaks=k,labels=F)
+
+diags<-NULL
+for(i in 1:k){
+train<-data1[folds!=i,]
+test<-data1[folds==i,]
+
+truth<-test$y
+
+fit<- glm(y~npreg+bp+skin+bmi+age+ped+glu,data=train,family="binomial")
+probs<- predict(fit,newdata = test,type="response")
+
+diags<-rbind(diags,class_diag(probs,truth))
+}
+
+summarize_all(diags,mean)
+
+library(glmnet)
+Pima_resp <- as.matrix(Pima$y)
+Pima_preds <- model.matrix(y~npreg+bp+skin+bmi+age+ped+glu, data=Pima)[,-1]
+cv <- cv.glmnet(Pima_preds,Pima_resp,family='binomial')
+lasso_fit <- glmnet(Pima_preds,Pima_resp,family='binomial',lambda=cv$lambda.1se)
+coef(lasso_fit)
+
+data1<-Pima[sample(nrow(Pima)),]
+folds<-cut(seq(1:nrow(Pima)),breaks=k,labels=F)
+
+diags<-NULL
+for(i in 1:k){
+train<-data1[folds!=i,]
+test<-data1[folds==i,]
+
+truth<-test$y
+
+fit<- glm(y~npreg+bmi+age+ped+glu,data=train,family="binomial")
+probs<- predict(fit,newdata = test,type="response")
+
+diags<-rbind(diags,class_diag(probs,truth))
+}
+
+summarize_all(diags,mean)
+```
+
+*The Accuracy is 0.795; the TPR is 0.578 (not good); the TNR is 0.901 (good); the PPV is 0.741; the AUC is 0.869 (good). AUC is the probability that a randomly selected person with diabetes has a higher predicted probability than a randomly selected person without diabetes, which is pretty good. The AUC for the 10-fold CV is slightly lower than the in-sample AUC. npreg, bmi, age, ped, and glu are retained. The AUC for the new model is better than the AUC for the previous model. *
